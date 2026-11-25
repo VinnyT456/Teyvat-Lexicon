@@ -1,0 +1,37 @@
+# Local credentials and settings. Keep the safe template tracked.
+.env
+.env.*
+!.env.example
+
+# Python environments, caches, and build output
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+/build/
+/dist/
+/wheels/
+
+# Downloaded dictionary cache and generated ChromaDB index
+/data.json
+/chroma_db/
+
+# Frontend and Tauri build output
+/desktop/node_modules/
+/desktop/dist/
+/desktop/tsconfig.tsbuildinfo
+/desktop/src-tauri/target/
+*.tsbuildinfo
+
+# Local design and workflow tooling
+/.graph-it/
+/.impeccable/
+
+# Generated launch-video renders and their composition workspace
+/brag-output/
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
