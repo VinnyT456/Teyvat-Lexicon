@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { Check, ChevronRight, Copy, Eraser, Languages, LoaderCircle, Mic, Settings2, Sparkles, Square, Star, Volume2, Wifi, WifiOff, X } from 'lucide-react';
+import { Check, ChevronRight, Copy, Eraser, Languages, LoaderCircle, Mic, RefreshCw, Settings2, Sparkles, Square, Star, Volume2, Wifi, WifiOff, X } from 'lucide-react';
 
 const API = 'http://127.0.0.1:8000/api/v1';
 const targets = [
@@ -59,6 +59,7 @@ function readFavoriteTerms(): Term[] {
 }
 
 const QUICK_MODE = new URLSearchParams(window.location.search).get('mode') === 'quick';
+const SETTINGS_MODE = new URLSearchParams(window.location.search).get('mode') === 'settings';
 const MAX_RECORDING_MS = 30_000;
 
 function getDetail(error: unknown) { return error instanceof Error ? error.message : 'Something went wrong. Please try again.'; }
@@ -70,7 +71,151 @@ function readPreference<T extends string>(key: string, choices: readonly T[], fa
   } catch { return fallback; }
 }
 
+function useServiceHealth() {
+  const [online, setOnline] = useState<boolean | null>(null);
+  const [health, setHealth] = useState<ServiceHealth | null>(null);
+  const [checkingConnection, setCheckingConnection] = useState(false);
+
+  const checkHealth = useCallback(async (manual = false) => {
+    if (manual) setCheckingConnection(true);
+    try {
+      const response = await fetch(`${API}/health`, { signal: AbortSignal.timeout(2500) });
+      if (!response.ok) throw new Error('Health check failed');
+      setHealth(await response.json() as ServiceHealth);
+      setOnline(true);
+    } catch {
+      setHealth(null);
+      setOnline(false);
+    } finally {
+      if (manual) setCheckingConnection(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void checkHealth();
+    const timer = window.setInterval(() => void checkHealth(), 12000);
+    return () => window.clearInterval(timer);
+  }, [checkHealth]);
+
+  return { online, health, checkingConnection, checkHealth };
+}
+
+function connectionSummary(online: boolean | null, health: ServiceHealth | null) {
+  if (online === null) return 'Checking FastAPI and the local model server.';
+  if (online === false) return 'FastAPI is offline. Start the local service, then check again.';
+  if (!health?.model_server_reachable) return 'FastAPI is online, but llama.cpp could not be reached.';
+  if (!health.dictionary_ready) return 'The model server responds, but the glossary is not ready.';
+  if (health.translation_model_loaded) return `${health.dictionary_entries.toLocaleString()} glossary entries ready.`;
+  if (health.translation_model_state === 'sleeping') return 'Connected. The model is asleep and should wake when you translate.';
+  return `Connected, but the model reports ${health.translation_model_state.replace(/_/g, ' ')}.`;
+}
+
+function ConnectionCheckButton({ compact = false, checking, onCheck }: { compact?: boolean; checking: boolean; onCheck: () => void }) {
+  return <button className={`connection-check-button${compact ? ' compact' : ''}`} type="button" onClick={onCheck} disabled={checking} aria-label="Check local API and model connection" title="Check local API and model connection">
+    {checking ? <LoaderCircle className="spin" size={14}/> : <RefreshCw size={14}/>}
+    {!compact && <span>{checking ? 'Checking…' : 'Check connection'}</span>}
+  </button>;
+}
+
+type SettingsPanelProps = {
+  sourceLanguage: SourceLanguage;
+  target: Target;
+  translationSize: TranslationSize;
+  online: boolean | null;
+  health: ServiceHealth | null;
+  checkingConnection: boolean;
+  onCheckConnection: () => void;
+  onSourceLanguageChange: (value: SourceLanguage) => void;
+  onTargetChange: (value: Target) => void;
+  onTranslationSizeChange: (value: TranslationSize) => void;
+  onClose: () => void;
+  onReset: () => void;
+};
+
+function SettingsPanel({ sourceLanguage, target, translationSize, online, health, checkingConnection, onCheckConnection, onSourceLanguageChange, onTargetChange, onTranslationSizeChange, onClose, onReset }: SettingsPanelProps) {
+  const connectionState = online === false || (online === true && !health?.model_server_reachable)
+    ? 'offline'
+    : online === true && health?.translation_model_loaded ? 'ready' : '';
+
+  return <>
+    <div className="settings-head"><div><p className="settings-kicker">MAKE IT YOURS</p><h2 id="settings-title">Settings</h2></div><button className="settings-close" type="button" onClick={onClose} aria-label="Close settings"><X size={18}/></button></div>
+    <section className="settings-section" aria-labelledby="defaults-title">
+      <h3 id="defaults-title">Translation defaults</h3>
+      <label className="setting-row" htmlFor="setting-source"><span><strong>Source language</strong><small>Auto-detects text; Cyrillic uses Russian prompts</small></span><select id="setting-source" value={sourceLanguage} onChange={(event) => onSourceLanguageChange(event.target.value as SourceLanguage)}><option value="auto">Auto-detect</option><option value="ru">Russian</option></select></label>
+      <label className="setting-row" htmlFor="setting-target"><span><strong>Target language</strong><small>Default for new translations</small></span><select id="setting-target" value={target} onChange={(event) => onTargetChange(event.target.value as Target)}>{targets.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label>
+    </section>
+    <section className="settings-section" aria-labelledby="reading-title">
+      <h3 id="reading-title">Reading</h3>
+      <label className="setting-row" htmlFor="setting-size"><span><strong>Translation text</strong><small>Adjust the size for easier reading</small></span><select id="setting-size" value={translationSize} onChange={(event) => onTranslationSizeChange(event.target.value as TranslationSize)}><option value="standard">Standard</option><option value="large">Large</option></select></label>
+    </section>
+    <section className="settings-section" aria-labelledby="connection-title">
+      <h3 id="connection-title">Connection</h3>
+      <div className={`settings-connection-status ${connectionState}`} role="status" aria-live="polite">
+        <span className="connection-dot" aria-hidden="true" />
+        <div><strong>{online === null ? 'Checking local services' : online === false ? 'FastAPI offline' : health?.translation_model_loaded ? 'Ready to translate' : health?.model_server_reachable ? 'Model server connected' : 'Model server offline'}</strong><small>{connectionSummary(online, health)}</small></div>
+        <ConnectionCheckButton compact checking={checkingConnection} onCheck={onCheckConnection}/>
+      </div>
+    </section>
+    <section className="settings-section settings-about" aria-label="App information">
+      <h3>Quick tips & privacy</h3>
+      <p><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>↵</kbd> translates. Add <kbd>Shift</kbd> + <kbd>C</kbd>, <kbd>L</kbd>, or <kbd>M</kbd> to copy, listen, or speak a new line. <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Space</kbd> opens Quick Translate.</p>
+      <p>Language and display preferences plus up to 100 favorite glossary terms are saved on this device. Source text, translations, and translation history are never saved.</p>
+    </section>
+    <div className="settings-footer"><button className="reset-button" type="button" onClick={onReset}>Reset defaults</button><span>TEYVAT LEXICON</span></div>
+  </>;
+}
+
+function SettingsWindow() {
+  const [sourceLanguage, setSourceLanguage] = useState<SourceLanguage>(() => readPreference('source-language', ['auto', 'ru'], 'auto'));
+  const [target, setTarget] = useState<Target>(() => readPreference('target-language', targets.map((item) => item.code), 'en'));
+  const [translationSize, setTranslationSize] = useState<TranslationSize>(() => readPreference('translation-size', ['standard', 'large'], 'standard'));
+  const { online, health, checkingConnection, checkHealth } = useServiceHealth();
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'teyvat.source-language') {
+        if (event.newValue === 'auto' || event.newValue === 'ru') setSourceLanguage(event.newValue);
+      } else if (event.key === 'teyvat.target-language') {
+        if (targets.some((item) => item.code === event.newValue)) setTarget(event.newValue as Target);
+      } else if (event.key === 'teyvat.translation-size') {
+        if (event.newValue === 'standard' || event.newValue === 'large') setTranslationSize(event.newValue);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  const savePreference = (key: string, value: string) => {
+    try { window.localStorage.setItem(`teyvat.${key}`, value); } catch { /* Keep the setting usable for this window. */ }
+  };
+  const updateSourceLanguage = (value: SourceLanguage) => { setSourceLanguage(value); savePreference('source-language', value); };
+  const updateTarget = (value: Target) => { setTarget(value); savePreference('target-language', value); };
+  const updateTranslationSize = (value: TranslationSize) => { setTranslationSize(value); savePreference('translation-size', value); };
+  const closeSettings = () => { if (isTauri()) void invoke('hide_settings_window_command'); else window.close(); };
+
+  return <main className="settings-window-shell"><div className="settings-window-panel">
+    <SettingsPanel
+      sourceLanguage={sourceLanguage}
+      target={target}
+      translationSize={translationSize}
+      online={online}
+      health={health}
+      checkingConnection={checkingConnection}
+      onCheckConnection={() => void checkHealth(true)}
+      onSourceLanguageChange={updateSourceLanguage}
+      onTargetChange={updateTarget}
+      onTranslationSizeChange={updateTranslationSize}
+      onClose={closeSettings}
+      onReset={() => { updateSourceLanguage('auto'); updateTarget('en'); updateTranslationSize('standard'); }}
+    />
+  </div></main>;
+}
+
 export default function App() {
+  return SETTINGS_MODE ? <SettingsWindow /> : <TranslationApp />;
+}
+
+function TranslationApp() {
   const [source, setSource] = useState('');
   const [sourceLanguage, setSourceLanguage] = useState<SourceLanguage>(() => readPreference('source-language', ['auto', 'ru'], 'auto'));
   const [target, setTarget] = useState<Target>(() => readPreference('target-language', targets.map((item) => item.code), 'en'));
@@ -83,8 +228,7 @@ export default function App() {
   const [pronunciationOpen, setPronunciationOpen] = useState(false);
   const [pronunciationBusy, setPronunciationBusy] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [online, setOnline] = useState<boolean | null>(null);
-  const [health, setHealth] = useState<ServiceHealth | null>(null);
+  const { online, health, checkingConnection, checkHealth } = useServiceHealth();
   const [notice, setNotice] = useState<Notice>(null);
   const [copied, setCopied] = useState(false);
   const [endpointCopied, setEndpointCopied] = useState(false);
@@ -161,6 +305,20 @@ export default function App() {
     streamRef.current?.abort(); cancelPronunciation(); cancelSpeechInput(); stopSpeech(); setTarget(value); setResult(null); setNotice(null);
   }, [cancelPronunciation, cancelSpeechInput, stopSpeech]);
 
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'teyvat.source-language') {
+        if (event.newValue === 'auto' || event.newValue === 'ru') selectSourceLanguage(event.newValue);
+      } else if (event.key === 'teyvat.target-language') {
+        if (targets.some((item) => item.code === event.newValue)) selectTarget(event.newValue as Target);
+      } else if (event.key === 'teyvat.translation-size') {
+        if (event.newValue === 'standard' || event.newValue === 'large') setTranslationSize(event.newValue);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [selectSourceLanguage, selectTarget]);
+
   useEffect(() => { try { window.localStorage.setItem('teyvat.source-language', sourceLanguage); } catch { /* Preferences remain usable if storage is unavailable. */ } }, [sourceLanguage]);
   useEffect(() => { try { window.localStorage.setItem('teyvat.target-language', target); } catch { /* Preferences remain usable if storage is unavailable. */ } }, [target]);
   useEffect(() => { try { window.localStorage.setItem('teyvat.translation-size', translationSize); } catch { /* Preferences remain usable if storage is unavailable. */ } }, [translationSize]);
@@ -218,27 +376,6 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (QUICK_MODE || !isTauri()) return;
-    let unlisten: (() => void) | undefined;
-    let disposed = false;
-    void listen('open-settings', () => setSettingsOpen(true)).then((stopListening) => {
-      if (disposed) stopListening();
-      else unlisten = stopListening;
-    });
-    return () => { disposed = true; unlisten?.(); };
-  }, []);
-
-  const checkHealth = useCallback(async () => {
-    try {
-      const response = await fetch(`${API}/health`, { signal: AbortSignal.timeout(2500) });
-      if (!response.ok) throw new Error('Health check failed');
-      setHealth(await response.json() as ServiceHealth);
-      setOnline(true);
-    } catch { setHealth(null); setOnline(false); }
-  }, []);
-  useEffect(() => { void checkHealth(); const timer = window.setInterval(checkHealth, 12000); return () => window.clearInterval(timer); }, [checkHealth]);
-
   const translate = useCallback(async (input?: string) => {
     if (busy) return;
     const text = input ?? source;
@@ -259,7 +396,7 @@ export default function App() {
           throw new Error(detail);
         }
         const current = sourceRef.current?.value === text && document.querySelector<HTMLInputElement>('input[name="target-language"]:checked')?.value === target;
-        if (current) { setResult(payload as Result); setNotice({ kind: 'success', message: `Translation ready in ${selectedName}.` }); setOnline(true); void checkHealth(); }
+        if (current) { setResult(payload as Result); setNotice({ kind: 'success', message: `Translation ready in ${selectedName}.` }); void checkHealth(); }
         return;
       }
       if (!response.ok) {
@@ -276,7 +413,7 @@ export default function App() {
         if (!isCurrent()) { controller.abort(); return; }
         if (event.type === 'terms') setResult((current) => ({ original: text, target_language: target, translation: current?.translation ?? '', retrieved_terms: event.retrieved_terms ?? [] }));
         else if (event.type === 'token') setResult((current) => ({ original: text, target_language: target, translation: `${current?.translation ?? ''}${event.text ?? ''}`, retrieved_terms: current?.retrieved_terms ?? [] }));
-        else if (event.type === 'done') { receivedDone = true; setResult((current) => ({ original: text, target_language: target, translation: event.translation ?? current?.translation ?? '', retrieved_terms: current?.retrieved_terms ?? [] })); setNotice({ kind: 'success', message: `Translation ready in ${selectedName}.` }); setOnline(true); void checkHealth(); }
+        else if (event.type === 'done') { receivedDone = true; setResult((current) => ({ original: text, target_language: target, translation: event.translation ?? current?.translation ?? '', retrieved_terms: current?.retrieved_terms ?? [] })); setNotice({ kind: 'success', message: `Translation ready in ${selectedName}.` }); void checkHealth(); }
         else if (event.type === 'error') throw new Error(event.detail || 'The translation service could not complete this request.');
       };
       while (true) {
@@ -292,7 +429,7 @@ export default function App() {
       if (controller.signal.aborted) return;
       setResult(null);
       const message = error instanceof TypeError ? 'Cannot reach the local translation service. Start it and try again.' : getDetail(error);
-      setNotice({ kind: 'error', message }); if (error instanceof TypeError) { setOnline(false); setHealth(null); } else void checkHealth();
+      setNotice({ kind: 'error', message }); void checkHealth();
     } finally { if (streamRef.current === controller) streamRef.current = null; setBusy(false); }
   }, [busy, cancelPronunciation, cancelSpeechInput, checkHealth, selectedName, source, sourceLanguage, stopSpeech, target]);
 
@@ -590,14 +727,16 @@ export default function App() {
       <div className="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40" role="presentation"><path className="book-page" d="M7 11.5c5.4-2.2 9.7-1.3 13 1.4v19c-3.3-2.7-7.6-3.6-13-1.4z"/><path className="book-page" d="M33 11.5c-5.4-2.2-9.7-1.3-13 1.4v19c3.3-2.7 7.6-3.6 13-1.4z"/><path className="book-line" d="M10.5 17c3-.8 5.4-.3 7.5 1.1M10.5 21c3-.8 5.4-.3 7.5 1.1M29.5 17c-3-.8-5.4-.3-7.5 1.1M29.5 21c-3-.8-5.4-.3-7.5 1.1"/><path className="book-star" d="m28 4 1.4 3.5L33 9l-3.6 1.4L28 14l-1.4-3.6L23 9l3.6-1.5z"/></svg></div>
       <div className="brand" data-tauri-drag-region>Teyvat Lexicon<small>{QUICK_MODE ? 'QUICK TRANSLATE' : 'GENSHIN TRANSLATION DESK'}</small></div>
       {QUICK_MODE ? <div className="quick-window-controls">
-        <div className={`service quick-service ${serviceTone}`} role="status" aria-live="polite" aria-label={serviceDetails} title={serviceDetails}>{online === false || modelServerOffline ? <WifiOff size={14}/> : modelState === 'loading' ? <LoaderCircle className="spin" size={14}/> : <Wifi size={14}/>}<span>{online === false ? 'API offline' : online === null ? 'Checking API' : 'API ready'}</span></div>
+        <div className={`service quick-service ${serviceTone}`} role="status" aria-live="polite" aria-label={serviceDetails} title={serviceDetails}>{online === false || modelServerOffline ? <WifiOff size={14}/> : modelState === 'loading' ? <LoaderCircle className="spin" size={14}/> : <Wifi size={14}/>}<span>{serviceLabel}</span></div>
+        <ConnectionCheckButton compact checking={checkingConnection} onCheck={() => void checkHealth(true)}/>
         <button className="quick-close-button" type="button" onClick={() => void invoke('hide_quick_window_command')} aria-label="Hide quick translator"><X size={17}/></button>
-      </div> : <>
-        <button className="settings-button" type="button" onClick={() => setSettingsOpen(true)} aria-haspopup="dialog" aria-label="Open settings"><Settings2 size={16}/><span>SETTINGS</span></button>
+      </div> : <div className="header-actions">
         <div className={`service ${serviceTone}`} role="status" aria-live="polite" aria-label={serviceDetails} title={serviceDetails}>
           {online === false || modelServerOffline ? <WifiOff size={15}/> : modelState === 'loading' ? <LoaderCircle className="spin" size={15}/> : <Wifi size={15}/>}<span>{serviceLabel}</span>
         </div>
-      </>}
+        <ConnectionCheckButton checking={checkingConnection} onCheck={() => void checkHealth(true)}/>
+        <button className="settings-button" type="button" onClick={() => setSettingsOpen(true)} aria-haspopup="dialog" aria-label="Open settings"><Settings2 size={16}/><span>SETTINGS</span></button>
+      </div>}
     </header>
 
     {QUICK_MODE && <section className="popover-engine" aria-label="Local model status">
@@ -663,28 +802,28 @@ export default function App() {
     <footer className="bottom"><span>LOCAL TRANSLATION · NO SAVED HISTORY</span><span>FOUR TARGET LANGUAGES</span></footer>
 
     {QUICK_MODE && <footer className="popover-footer">
-      <button type="button" onClick={() => void invoke('open_settings_command')}><Settings2 size={15}/>Settings</button>
-      <span>LOCAL · NO HISTORY</span>
-      <button type="button" onClick={() => void invoke('quit_application_command')}>Quit</button>
+      <span className="popover-footer-note">LOCAL · NO HISTORY</span>
+      <div className="popover-footer-actions">
+        <button type="button" onClick={() => void invoke('open_settings_command')}><Settings2 size={15}/>Settings</button>
+        <button type="button" onClick={() => void invoke('quit_application_command')}>Quit</button>
+      </div>
     </footer>}
 
     <dialog ref={settingsRef} className="settings-dialog" aria-labelledby="settings-title" onClose={() => setSettingsOpen(false)} onClick={(event) => { if (event.target === settingsRef.current) setSettingsOpen(false); }}>
-      <div className="settings-head"><div><p className="settings-kicker">MAKE IT YOURS</p><h2 id="settings-title">Settings</h2></div><button className="settings-close" type="button" onClick={() => setSettingsOpen(false)} aria-label="Close settings"><X size={18}/></button></div>
-      <section className="settings-section" aria-labelledby="defaults-title">
-        <h3 id="defaults-title">Translation defaults</h3>
-        <label className="setting-row" htmlFor="setting-source"><span><strong>Source language</strong><small>Auto-detects text; Cyrillic uses Russian prompts</small></span><select id="setting-source" value={sourceLanguage} onChange={(event) => selectSourceLanguage(event.target.value as SourceLanguage)}><option value="auto">Auto-detect</option><option value="ru">Russian</option></select></label>
-        <label className="setting-row" htmlFor="setting-target"><span><strong>Target language</strong><small>Default for new translations</small></span><select id="setting-target" value={target} onChange={(event) => selectTarget(event.target.value as Target)}>{targets.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label>
-      </section>
-      <section className="settings-section" aria-labelledby="reading-title">
-        <h3 id="reading-title">Reading</h3>
-        <label className="setting-row" htmlFor="setting-size"><span><strong>Translation text</strong><small>Adjust the size for easier reading</small></span><select id="setting-size" value={translationSize} onChange={(event) => setTranslationSize(event.target.value as TranslationSize)}><option value="standard">Standard</option><option value="large">Large</option></select></label>
-      </section>
-      <section className="settings-section settings-about" aria-label="App information">
-        <h3>Quick tips & privacy</h3>
-        <p><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>↵</kbd> translates. Add <kbd>Shift</kbd> + <kbd>C</kbd>, <kbd>L</kbd>, or <kbd>M</kbd> to copy, listen, or speak a new line. <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Space</kbd> opens Quick Translate.</p>
-        <p>Language and display preferences plus up to 100 favorite glossary terms are saved on this device. Source text, translations, and translation history are never saved.</p>
-      </section>
-      <div className="settings-footer"><button className="reset-button" type="button" onClick={() => { selectSourceLanguage('auto'); selectTarget('en'); setTranslationSize('standard'); }}>Reset defaults</button><span>TEYVAT LEXICON</span></div>
+      <SettingsPanel
+        sourceLanguage={sourceLanguage}
+        target={target}
+        translationSize={translationSize}
+        online={online}
+        health={health}
+        checkingConnection={checkingConnection}
+        onCheckConnection={() => void checkHealth(true)}
+        onSourceLanguageChange={selectSourceLanguage}
+        onTargetChange={selectTarget}
+        onTranslationSizeChange={setTranslationSize}
+        onClose={() => setSettingsOpen(false)}
+        onReset={() => { selectSourceLanguage('auto'); selectTarget('en'); setTranslationSize('standard'); }}
+      />
     </dialog>
   </main>;
 }

@@ -75,9 +75,17 @@ fn show_main_window_command(app: AppHandle) {
 
 #[tauri::command]
 fn open_settings_command(app: AppHandle) {
-    show_main_window(&app);
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("open-settings", ());
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+#[tauri::command]
+fn hide_settings_window_command(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.hide();
     }
 }
 
@@ -109,6 +117,7 @@ pub fn run() {
             show_main_window_command,
             hide_quick_window_command,
             open_settings_command,
+            hide_settings_window_command,
             quit_application_command
         ])
         .setup(|app| {
@@ -133,6 +142,19 @@ pub fn run() {
             .shadow(true)
             .always_on_top(true)
             .skip_taskbar(true)
+            .center()
+            .visible(false)
+            .build()?;
+
+            WebviewWindowBuilder::new(
+                app,
+                "settings",
+                WebviewUrl::App("index.html?mode=settings".into()),
+            )
+            .title("Teyvat Lexicon · Settings")
+            .inner_size(500.0, 620.0)
+            .min_inner_size(420.0, 520.0)
+            .resizable(false)
             .center()
             .visible(false)
             .build()?;

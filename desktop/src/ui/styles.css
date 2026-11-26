@@ -84,7 +84,6 @@ button:focus-visible,select:focus-visible,textarea:focus-visible {
   color:#555A80
 }
 .service {
-  margin-left:auto;
   display:flex;
   align-items:center;
   gap:7px;
@@ -96,8 +95,50 @@ button:focus-visible,select:focus-visible,textarea:focus-visible {
   border-radius:24px;
   background:#E6F7EF
 }
-.settings-button {
+.header-actions {
   margin-left:auto;
+  display:flex;
+  align-items:center;
+  gap:8px
+}
+.connection-check-button {
+  min-height:36px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  padding:8px 10px;
+  border:1px solid #D8C9F2;
+  border-radius:13px;
+  background:#FFFDF8;
+  color:#2A2F5A;
+  font-size:11px;
+  font-weight:850;
+  white-space:nowrap;
+  cursor:pointer;
+  transition:background-color .16s ease, transform .16s ease
+}
+.connection-check-button:hover:not(:disabled) {
+  background:#EDE4FF;
+  transform:translateY(-1px)
+}
+.connection-check-button:disabled {
+  cursor:wait;
+  opacity:.75
+}
+.connection-check-button.compact {
+  width:31px;
+  min-height:31px;
+  padding:6px;
+  border-color:#38383D;
+  border-radius:9px;
+  background:#202023;
+  color:#D1D1D5
+}
+.quick-shell .connection-check-button.compact:hover:not(:disabled) {
+  background:#303034
+}
+.settings-button {
   display:flex;
   align-items:center;
   gap:6px;
@@ -220,6 +261,62 @@ button:focus-visible,select:focus-visible,textarea:focus-visible {
   font-size:10px;
   font-weight:900;
   letter-spacing:.8px
+}
+.settings-connection-status {
+  min-height:58px;
+  display:grid;
+  grid-template-columns:10px minmax(0,1fr) auto;
+  align-items:center;
+  gap:10px;
+  padding:10px 12px;
+  border:1px solid #B8DCC8;
+  border-radius:13px;
+  background:#E6F7EF
+}
+.settings-connection-status.offline {
+  border-color:#E8BFD0;
+  background:#FFE3EC
+}
+.settings-connection-status strong,.settings-connection-status small {
+  display:block
+}
+.settings-connection-status strong {
+  font-size:12px;
+  font-weight:900
+}
+.settings-connection-status small {
+  margin-top:2px;
+  color:#555A80;
+  font-size:11px;
+  line-height:1.35
+}
+.connection-dot {
+  width:9px;
+  height:9px;
+  border-radius:50%;
+  background:#B88435
+}
+.settings-connection-status.ready .connection-dot {
+  background:#4F9A71
+}
+.settings-connection-status.offline .connection-dot {
+  background:#D4537F
+}
+.settings-window-shell {
+  width:100%;
+  min-height:100vh;
+  padding:18px;
+  overflow:auto;
+  background:#FFF6E8
+}
+.settings-window-panel {
+  width:min(500px,100%);
+  min-height:100%;
+  margin:0 auto;
+  padding:18px 20px;
+  border:1px solid #D8C9F2;
+  border-radius:20px;
+  background:#FFF6E8
 }
 .reset-button {
   padding:7px 10px;
@@ -388,11 +485,6 @@ button:focus-visible,select:focus-visible,textarea:focus-visible {
   font-weight:600;
   line-height:1.55;
   color:#2A2F5A
-}
-.pane textarea:focus-visible {
-  outline:2px solid #2A2F5A!important;
-  outline-offset:3px;
-  border-radius:5px
 }
 .pane textarea::placeholder {
   color:#605A78;
@@ -1022,7 +1114,7 @@ kbd {
 }
 @media(max-width:420px) {
   .settings-button {
-    margin-left:auto;
+    margin-left:0;
     padding:8px
   }
   .settings-button span {
@@ -1141,6 +1233,12 @@ html.quick-popover,body.quick-popover {
   gap:8px;
   border-bottom:1px solid #333337;
   color:#F3F3F5
+}
+.quick-window-controls {
+  margin-left:auto;
+  display:flex;
+  align-items:center;
+  gap:6px
 }
 .quick-shell .brand-mark {
   width:31px;
@@ -1605,6 +1703,14 @@ html.quick-popover,body.quick-popover {
   color:#898990;
   font-size:11px;
   font-weight:750
+}
+.popover-footer-note {
+  white-space:nowrap
+}
+.popover-footer-actions {
+  display:flex;
+  align-items:center;
+  gap:8px
 }
 .popover-footer button {
   display:flex;
